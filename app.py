@@ -1,81 +1,110 @@
-from flask import Flask, render_template, jsonify, Response, send_file, request
-from flask_sqlalchemy import SQLAlchemy
+from flask import Flask, render_template, send_file, request
+import mysql.connector
 import pandas as pd
 from io import BytesIO
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
+from datetime import datetime
 
 app = Flask(__name__)
 
 # MySQL Database Configuration
-app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+pymysql://root:root@localhost:3306/ProjectUFFT'
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+DB_CONFIG = {
+    'host': 'localhost',
+    'user': 'root',
+    'password': 'root',
+    'database': 'ProjectUFFT'
+}
 
-db = SQLAlchemy(app)
-
-# Models
-class Expense(db.Model):
-    __tablename__ = 'expenses'
-    expense_id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, nullable=False)
-    category_id = db.Column(db.Integer, db.ForeignKey('categories.category_id'))
-    amount = db.Column(db.Float, nullable=False)
-    date = db.Column(db.DateTime, nullable=False)
-    description = db.Column(db.String(255))
-    category = db.relationship("Category", backref="expenses")
-
-class Category(db.Model):
-    __tablename__ = 'categories'
-    category_id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(100), nullable=False)
+# Utility function to fetch database connection
+def get_db_connection():
+    return mysql.connector.connect(**DB_CONFIG)
 
 # Route to fetch user-specific data
+from datetime import datetime, timedelta
+
 @app.route('/', methods=['GET', 'POST'])
 def index():
-    # Fetch all unique user IDs
-    user_ids = [row[0] for row in db.session.query(Expense.user_id).distinct().all()]
-    
-    # Default values
     selected_user_id = None
+    search_query = None
+    time_range = None
     expense_data = []
     category_totals = {}
+    user_ids = []
+
+    # Fetch all unique user IDs
+    with get_db_connection() as connection:
+        with connection.cursor(dictionary=True) as cursor:
+            cursor.execute("SELECT DISTINCT user_id FROM expenses")
+            user_ids = [row['user_id'] for row in cursor.fetchall()]
 
     if request.method == 'POST':
-        # Get the selected user ID from the form
         selected_user_id = request.form.get('user_id')
-        
-        # Convert the selected user ID to an integer for compatibility
+        search_query = request.form.get('search_query', '').strip()
+        time_range = request.form.get('time_range', '')
+
         try:
             selected_user_id = int(selected_user_id)
-        except ValueError:
+        except (ValueError, TypeError):
             selected_user_id = None
 
         if selected_user_id:
-            # Fetch expenses for the selected user
-            expenses = db.session.query(Expense, Category.name).join(Category).filter(Expense.user_id == selected_user_id).all()
+            with get_db_connection() as connection:
+                with connection.cursor(dictionary=True) as cursor:
+                    sql = """
+                        SELECT e.expense_id, c.name AS category, e.amount, e.date, e.description
+                        FROM expenses e
+                        JOIN categories c ON e.category_id = c.category_id
+                        WHERE e.user_id = %s
+                    """
+                    params = [selected_user_id]
 
-            # Prepare data for the table
-            expense_data = [
-                {
-                    'expense_id': exp.Expense.expense_id,
-                    'category': exp.name,
-                    'amount': exp.Expense.amount,
-                    'date': exp.Expense.date.strftime("%d-%m-%Y"),
-                    'description': exp.Expense.description or "N/A"
-                } for exp in expenses
-            ]
+                    # Filter by time range
+                    if time_range == "week":
+                        start_date = datetime.now() - timedelta(days=7)
+                    elif time_range == "month":
+                        start_date = datetime.now() - timedelta(days=30)
+                    elif time_range == "year":
+                        start_date = datetime.now() - timedelta(days=365)
+                    else:
+                        start_date = None
 
-            # Prepare data for the pie chart
-            category_totals = {}
-            for exp in expenses:
-                category_totals[exp.name] = category_totals.get(exp.name, 0) + exp.Expense.amount
+                    if start_date:
+                        sql += " AND e.date >= %s"
+                        params.append(start_date)
+                        
+                    sql += " ORDER BY e.date"
+
+                    # Filter by search query if provided
+                    if search_query:
+                        sql += " AND e.description LIKE %s"
+                        params.append(f"%{search_query}%")
+
+                    cursor.execute(sql, tuple(params))
+                    expenses = cursor.fetchall()
+
+                    expense_data = [
+                        {
+                            'expense_id': exp['expense_id'],
+                            'category': exp['category'],
+                            'amount': exp['amount'],
+                            'date': exp['date'].strftime("%d-%m-%Y"),
+                            'description': exp['description'] or "N/A"
+                        } for exp in expenses
+                    ]
+
+                    # Prepare data for chart
+                    for exp in expenses:
+                        category_totals[exp['category']] = category_totals.get(exp['category'], 0) + exp['amount']
 
     return render_template(
         'index.html',
         user_ids=user_ids,
         selected_user_id=selected_user_id,
+        search_query=search_query,
+        time_range=time_range,
         expenses=expense_data,
         category_totals=category_totals
     )
@@ -84,42 +113,56 @@ def index():
 @app.route('/download/csv')
 def download_csv():
     selected_user_id = request.args.get('user_id', type=int)
-    expenses = db.session.query(Expense, Category.name).join(Category).filter(Expense.user_id == selected_user_id).all()
 
-    # Prepare data
+    with get_db_connection() as connection:
+        with connection.cursor(dictionary=True) as cursor:
+            cursor.execute("""
+                SELECT e.expense_id, c.name AS category, e.amount, e.date, e.description
+                FROM expenses e
+                JOIN categories c ON e.category_id = c.category_id
+                WHERE e.user_id = %s
+            """, (selected_user_id,))
+            expenses = cursor.fetchall()
+
     data = {
-        'Expense ID': [exp.Expense.expense_id for exp in expenses],
-        'Category': [exp.name for exp in expenses],
-        'Amount': [exp.Expense.amount for exp in expenses],
-        'Date': [exp.Expense.date.strftime("%d-%m-%Y") for exp in expenses],
-        'Description': [exp.Expense.description or "N/A" for exp in expenses]
+        'Expense ID': [exp['expense_id'] for exp in expenses],
+        'Category': [exp['category'] for exp in expenses],
+        'Amount': [exp['amount'] for exp in expenses],
+        'Date': [exp['date'].strftime("%d-%m-%Y") for exp in expenses],
+        'Description': [exp['description'] or "N/A" for exp in expenses]
     }
-    df = pd.DataFrame(data)
 
-    # Write to CSV
+    df = pd.DataFrame(data)
     output = BytesIO()
     df.to_csv(output, index=False, encoding='utf-8')
     output.seek(0)
 
     return send_file(output, as_attachment=True, download_name='expenses.csv', mimetype='text/csv')
 
-
 # Route to download Excel
 @app.route('/download/excel')
 def download_excel():
     selected_user_id = request.args.get('user_id', type=int)
-    expenses = db.session.query(Expense, Category.name).join(Category).filter(Expense.user_id == selected_user_id).all()
 
-    # Create Excel data
+    with get_db_connection() as connection:
+        with connection.cursor(dictionary=True) as cursor:
+            cursor.execute("""
+                SELECT e.expense_id, c.name AS category, e.amount, e.date, e.description
+                FROM expenses e
+                JOIN categories c ON e.category_id = c.category_id
+                WHERE e.user_id = %s
+            """, (selected_user_id,))
+            expenses = cursor.fetchall()
+
     data = {
-        'Expense ID': [exp.Expense.expense_id for exp in expenses],
-        'Category': [exp.name for exp in expenses],
-        'Amount': [exp.Expense.amount for exp in expenses],
-        'Date': [exp.Expense.date.strftime("%d-%m-%Y") for exp in expenses],
-        'Description': [exp.Expense.description or "N/A" for exp in expenses]
+        'Expense ID': [exp['expense_id'] for exp in expenses],
+        'Category': [exp['category'] for exp in expenses],
+        'Amount': [exp['amount'] for exp in expenses],
+        'Date': [exp['date'].strftime("%d-%m-%Y") for exp in expenses],
+        'Description': [exp['description'] or "N/A" for exp in expenses]
     }
-    df = pd.DataFrame(data)
 
+    df = pd.DataFrame(data)
     output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         df.to_excel(writer, index=False, sheet_name='Expenses')
@@ -131,55 +174,47 @@ def download_excel():
 @app.route('/download/pdf')
 def download_pdf():
     selected_user_id = request.args.get('user_id', type=int)
-    expenses = db.session.query(Expense, Category.name).join(Category).filter(Expense.user_id == selected_user_id).all()
 
-    # Prepare data
-    data = [['Expense ID', 'Category', 'Amount', 'Date', 'Description']]  # Header row
+    with get_db_connection() as connection:
+        with connection.cursor(dictionary=True) as cursor:
+            cursor.execute("""
+                SELECT e.expense_id, c.name AS category, e.amount, e.date, e.description
+                FROM expenses e
+                JOIN categories c ON e.category_id = c.category_id
+                WHERE e.user_id = %s
+            """, (selected_user_id,))
+            expenses = cursor.fetchall()
+
+    data = [['Expense ID', 'Category', 'Amount', 'Date', 'Description']]
     data += [
-        [exp.Expense.expense_id, exp.name, f"{exp.Expense.amount:.2f}", exp.Expense.date.strftime("%Y-%m-%d"), exp.Expense.description or "N/A"]
+        [exp['expense_id'], exp['category'], f"{exp['amount']:.2f}", exp['date'].strftime("%Y-%m-%d"), exp['description'] or "N/A"]
         for exp in expenses
     ]
 
-    # Create a BytesIO stream
     pdf_output = BytesIO()
     doc = SimpleDocTemplate(pdf_output, pagesize=letter)
-
-    # Define styles
-    styles = getSampleStyleSheet()
-    centered_title_style = ParagraphStyle(
-        name='CenteredTitle',
-        parent=styles['Heading1'],
-        alignment=1,  # 1 for center alignment
-    )
-
-    # Title
-    title = Paragraph("Expense Report", centered_title_style)
-
-    # Add some spacing
-    spacer = Spacer(1, 12)
-
-    # Create table
     table = Table(data)
     table.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
         ('GRID', (0, 0), (-1, -1), 1, colors.black)
     ]))
-
-    # Build PDF
-    elements = [title, spacer, table]
-    doc.build(elements)
+    doc.build([Paragraph("Expense Report", getSampleStyleSheet()['Heading1']), Spacer(1, 12), table])
     pdf_output.seek(0)
 
-    return send_file(
-        pdf_output,
-        as_attachment=True,
-        download_name="expenses.pdf",
-        mimetype="application/pdf"
-    )
-        
+    return send_file(pdf_output, as_attachment=True, download_name="expenses.pdf", mimetype="application/pdf")
+# Handle Invalid URL
+@app.errorhandler(404)
+def page_not_found(e):
+    return render_template(
+        'index.html',
+        error_message="Invalid action! The page you are trying to access does not exist.",
+        user_ids=[],
+        selected_user_id=None,
+        search_query=None,
+        expenses=[],
+        category_totals={}
+    ), 404
+
+
 if __name__ == '__main__':
     app.run(debug=True)
