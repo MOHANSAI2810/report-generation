@@ -31,37 +31,27 @@
                 <!-- Range Selection -->
                 <div class="form-group">
                     <label for="range" class="form-label">Range:</label>
-                    <select name="range" id="range" class="form-select">
+                    <select name="range" id="range" class="form-select" onchange="toggleCustomDateFields(this.value)">
                         <option value="">-- Select Range --</option>
                         <option value="Week" {% if selected_range == "Week" %}selected{% endif %}>Last Week</option>
                         <option value="Month" {% if selected_range == "Month" %}selected{% endif %}>Last Month</option>
                         <option value="Year" {% if selected_range == "Year" %}selected{% endif %}>Last Year</option>
+                        <option value="Custom Date" {% if selected_range == "Custom Date" %}selected{% endif %}>Custom Date</option>
                     </select>
-                </div>
-
-                <!-- Date Selection -->
-                <div class="form-group">
-                    <label for="date" class="form-label">Date:</label>
-                    <input type="date" id="date" name="date" class="form-control" value="{{ selected_date }}">
-                </div>
-
-                <!-- Search Field -->
-                <div class="form-group">
-                    <label for="search" class="form-label">Search:</label>
-                    <input type="text" id="search" name="search" class="form-control" placeholder="Enter keywords" value="{{ search_query }}">
                 </div>
             </div>
 
-            <!-- Categories -->
-            <div class="text-center my-3">
-                <label>Categories:</label>
-                <div class="d-flex justify-content-center flex-wrap">
-                    {% for category in category_names %}
-                    <div class="form-check mx-3">
-                        <input class="form-check-input" type="checkbox" name="categories" value="{{ category }}" id="category_{{ loop.index }}">
-                        <label class="form-check-label" for="category_{{ loop.index }}">{{ category }}</label>
+            <!-- Custom Date Fields -->
+            <div id="customDateFields" style="display: {% if selected_range == 'Custom Date' %}block{% else %}none{% endif %};">
+                <div class="d-flex justify-content-center gap-3 mb-4">
+                    <div class="form-group">
+                        <label for="start_date" class="form-label">Start Date:</label>
+                        <input type="date" id="start_date" name="start_date" class="form-control" value="{{ start_date }}">
                     </div>
-                    {% endfor %}
+                    <div class="form-group">
+                        <label for="end_date" class="form-label">End Date:</label>
+                        <input type="date" id="end_date" name="end_date" class="form-control" value="{{ end_date }}">
+                    </div>
                 </div>
             </div>
 
@@ -114,6 +104,11 @@
     </div>
 
     <script>
+        function toggleCustomDateFields(value) {
+            const customDateFields = document.getElementById('customDateFields');
+            customDateFields.style.display = value === 'Custom Date' ? 'block' : 'none';
+        }
+
         const categoryTotals = {{ category_totals | tojson }};
         const labels = Object.keys(categoryTotals);
         const data = Object.values(categoryTotals);

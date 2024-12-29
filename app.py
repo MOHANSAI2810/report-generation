@@ -1,11 +1,5 @@
 from flask import Flask, render_template, send_file, request
 import mysql.connector
-import pandas as pd
-from io import BytesIO
-from reportlab.lib.pagesizes import letter
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
-from reportlab.lib.styles import getSampleStyleSheet
-from reportlab.lib import colors
 from datetime import datetime, timedelta
 
 app = Flask(__name__)
@@ -25,29 +19,25 @@ def get_db_connection():
 @app.route('/', methods=['GET', 'POST'])
 def index():
     selected_user_id = None
-    selected_date = None
     selected_range = None
-    selected_categories = []
+    start_date = None
+    end_date = None
     expense_data = []
     category_totals = {}
     user_ids = []
-    category_names = []
     no_records_message = None
 
-    # Fetch all unique user IDs and category names
+    # Fetch all unique user IDs
     with get_db_connection() as connection:
         with connection.cursor(dictionary=True) as cursor:
             cursor.execute("SELECT DISTINCT user_id FROM expenses")
             user_ids = [row['user_id'] for row in cursor.fetchall()]
 
-            cursor.execute("SELECT name FROM categories")
-            category_names = [row['name'] for row in cursor.fetchall()]
-
     if request.method == 'POST':
         selected_user_id = request.form.get('user_id')
-        selected_date = request.form.get('date')
         selected_range = request.form.get('range')
-        selected_categories = request.form.getlist('categories')
+        start_date = request.form.get('start_date')
+        end_date = request.form.get('end_date')
 
         try:
             selected_user_id = int(selected_user_id)
@@ -75,16 +65,9 @@ def index():
                     elif selected_range == "Year":
                         sql += " AND e.date >= %s"
                         params.append((datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d'))
-
-                    # Filter by specific date
-                    if selected_date:
-                        sql += " AND e.date = %s"
-                        params.append(selected_date)
-
-                    # Filter by selected categories
-                    if selected_categories:
-                        sql += " AND c.name IN (%s)" % ', '.join(['%s'] * len(selected_categories))
-                        params.extend(selected_categories)
+                    elif selected_range == "Custom Date" and start_date and end_date:
+                        sql += " AND e.date BETWEEN %s AND %s"
+                        params.extend([start_date, end_date])
 
                     sql += " ORDER BY e.date"
 
@@ -114,9 +97,9 @@ def index():
         selected_user_id=selected_user_id,
         expenses=expense_data,
         category_totals=category_totals,
-        category_names=category_names,
-        selected_date=selected_date,
         selected_range=selected_range,
+        start_date=start_date,
+        end_date=end_date,
         no_records_message=no_records_message
     )
 
