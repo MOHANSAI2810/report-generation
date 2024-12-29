@@ -4,41 +4,21 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Project UFFT</title>
+    <title>Expense Report</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha3/dist/css/bootstrap.min.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
-    <style>
-        #searchInput {
-            border: 1px solid black;
-        }
-
-        #noRecordsFound {
-            display: none;
-            text-align: center;
-            margin-top: 20px;
-            color: red;
-        }
-
-        #loadingAnimation {
-            display: none;
-            text-align: center;
-            margin-top: 20px;
-        }
-    </style>
 </head>
 
 <body>
     <div class="container py-4">
         <h1 class="text-center">Expense Report</h1>
 
-        <!-- Dropdown form -->
-        <div class="d-flex justify-content-center align-items-center my-4">
-            <form method="POST" action="/" class="row g-3 align-items-center" onsubmit="showLoading()">
-                <div class="col-auto">
-                    <label for="user_id" class="form-label">Select User:</label>
-                </div>
-                <div class="col-auto">
+        <!-- Filters -->
+        <form method="POST" action="/" class="my-4">
+            <div class="d-flex justify-content-center align-items-center gap-3 mb-4">
+                <!-- User Selection -->
+                <div class="form-group">
+                    <label for="user_id" class="form-label">User:</label>
                     <select name="user_id" id="user_id" class="form-select">
                         {% for user_id in user_ids %}
                         <option value="{{ user_id }}" {% if user_id==selected_user_id %}selected{% endif %}>
@@ -47,48 +27,60 @@
                         {% endfor %}
                     </select>
                 </div>
-                <div class="col-auto">
-                    <label for="time_range" class="form-label">Select Time Range:</label>
-                    </div>
-                    <div class="col-auto">
-                        <select name="time_range" id="time_range" class="form-select">
-                            <option value="">All Time</option>
-                            <option value="week" {% if time_range=="week" %}selected{% endif %}>Week</option>
-                            <option value="month" {% if time_range=="month" %}selected{% endif %}>Month</option>
-                            <option value="year" {% if time_range=="year" %}selected{% endif %}>Year</option>
-                        </select>
-                    </div>
-                    <div class="col-auto">
-                    <button type="submit" class="btn btn-primary">Fetch Records</button>
+
+                <!-- Range Selection -->
+                <div class="form-group">
+                    <label for="range" class="form-label">Range:</label>
+                    <select name="range" id="range" class="form-select">
+                        <option value="">-- Select Range --</option>
+                        <option value="Week" {% if selected_range == "Week" %}selected{% endif %}>Last Week</option>
+                        <option value="Month" {% if selected_range == "Month" %}selected{% endif %}>Last Month</option>
+                        <option value="Year" {% if selected_range == "Year" %}selected{% endif %}>Last Year</option>
+                    </select>
                 </div>
-            </form>
-        </div>
 
-        <div id="loadingAnimation">
-            <div class="spinner-border text-primary" role="status">
-                <span class="visually-hidden">Loading...</span>
+                <!-- Date Selection -->
+                <div class="form-group">
+                    <label for="date" class="form-label">Date:</label>
+                    <input type="date" id="date" name="date" class="form-control" value="{{ selected_date }}">
+                </div>
+
+                <!-- Search Field -->
+                <div class="form-group">
+                    <label for="search" class="form-label">Search:</label>
+                    <input type="text" id="search" name="search" class="form-control" placeholder="Enter keywords" value="{{ search_query }}">
+                </div>
             </div>
-        </div>
 
-        {% if error_message %}
-        <div style="color: red; font-weight: bold; margin-top: 10px;">
-            {{ error_message }}
-        </div>
+            <!-- Categories -->
+            <div class="text-center my-3">
+                <label>Categories:</label>
+                <div class="d-flex justify-content-center flex-wrap">
+                    {% for category in category_names %}
+                    <div class="form-check mx-3">
+                        <input class="form-check-input" type="checkbox" name="categories" value="{{ category }}" id="category_{{ loop.index }}">
+                        <label class="form-check-label" for="category_{{ loop.index }}">{{ category }}</label>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <!-- Buttons -->
+            <div class="text-center">
+                <button type="submit" class="btn btn-primary mx-2">Fetch Records</button>
+                <button type="reset" class="btn btn-secondary mx-2">Reset</button>
+            </div>
+        </form>
+
+        {% if no_records_message %}
+        <p class="text-center text-danger">{{ no_records_message }}</p>
         {% endif %}
 
         {% if expenses %}
-        <div>
-            <h2 class="text-center">Expense Report for User {{ selected_user_id }}</h2>
-
-            <!-- Search Field -->
-            <div class="d-flex justify-content-center my-3">
-                <input type="text" id="searchInput" class="form-control w-25" placeholder="Search expenses..."
-                    oninput="filterExpenses()">
-            </div>
-
-            <!-- Expense Table -->
-            <div class="table-responsive my-4">
-                <table class="table table-striped table-hover table-bordered" id="expenseTable">
+        <div class="row">
+            <div class="col-md-9">
+                <!-- Expense Table -->
+                <table class="table table-striped table-bordered">
                     <thead>
                         <tr>
                             <th>ID</th>
@@ -112,41 +104,20 @@
                 </table>
             </div>
 
-            <p id="noRecordsFound">No records found</p>
-
-            <!-- Pie Chart -->
-            <h2 class="text-center">Expense Distribution</h2>
-            <div class="d-flex justify-content-center">
-                <canvas id="expensePieChart" class="border rounded p-3"></canvas>
+            <div class="col-md-3">
+                <!-- Pie Chart -->
+                <h5>Expense Distribution</h5>
+                <canvas id="expensePieChart" width="200" height="200"></canvas>
             </div>
-
-            <!-- Export Buttons -->
-            <div class="text-center mt-4">
-                <a href="/download/csv?user_id={{ selected_user_id }}" class="btn btn-primary mx-2">Download CSV</a>
-                <a href="/download/excel?user_id={{ selected_user_id }}" class="btn btn-primary mx-2">Download Excel</a>
-                <a href="/download/pdf?user_id={{ selected_user_id }}" class="btn btn-primary mx-2">Download PDF</a>
-            </div>
-
-            <!-- Save Report Button
-            <div class="text-center mt-4">
-                <form method="POST" action="/save_report">
-                    <input type="hidden" name="user_id" value="{{ selected_user_id }}">
-                    <input type="hidden" name="content" value="{{ expenses | tojson }}">
-                    <button type="submit" class="btn btn-success">Save Report</button>
-                </form>
-            </div> -->
         </div>
         {% endif %}
     </div>
-    <script>
-        // Get category totals from the backend
-        const categoryTotals = {{ category_totals | tojson }};
 
-        // Prepare data for Chart.js
+    <script>
+        const categoryTotals = {{ category_totals | tojson }};
         const labels = Object.keys(categoryTotals);
         const data = Object.values(categoryTotals);
 
-        // Generate the pie chart
         const ctx = document.getElementById('expensePieChart').getContext('2d');
         new Chart(ctx, {
             type: 'pie',
@@ -155,11 +126,7 @@
                 datasets: [{
                     label: 'Expense Distribution',
                     data: data,
-                    backgroundColor: [
-                        '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf'
-                    ],
-                    borderColor: '#ffffff',
-                    borderWidth: 1
+                    backgroundColor: ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2'],
                 }]
             },
             options: {
@@ -167,46 +134,13 @@
                 plugins: {
                     tooltip: {
                         callbacks: {
-                            label: function (tooltipItem) {
-                                const category = labels[tooltipItem.dataIndex];
-                                const amount = data[tooltipItem.dataIndex];
-                                return `${category}: ₹${amount.toFixed(2)}`;
-                            }
+                            label: (tooltipItem) => `${labels[tooltipItem.dataIndex]}: ₹${data[tooltipItem.dataIndex].toFixed(2)}`
                         }
                     }
                 }
             }
         });
-
-        // Filter function for the table
-        function filterExpenses() {
-            const input = document.getElementById('searchInput').value.toLowerCase();
-            const table = document.getElementById('expenseTable');
-            const rows = table.getElementsByTagName('tr');
-            let visibleRowCount = 0;
-
-            for (let i = 1; i < rows.length; i++) {
-                const cells = rows[i].getElementsByTagName('td');
-                let match = false;
-                for (const cell of cells) {
-                    if (cell.textContent.toLowerCase().includes(input)) {
-                        match = true;
-                        break;
-                    }
-                }
-                rows[i].style.display = match ? '' : 'none';
-                if (match) visibleRowCount++;
-            }
-
-            document.getElementById('noRecordsFound').style.display = visibleRowCount === 0 ? 'block' : 'none';
-        }
-
-        // Show loading animation
-        function showLoading() {
-            document.getElementById('loadingAnimation').style.display = 'block';
-        }
     </script>
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha3/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 
 </html>
