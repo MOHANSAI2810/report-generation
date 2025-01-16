@@ -377,13 +377,12 @@ def generate_summary(expense_data):
 
 
 # Flask route to generate summary
+
 @app.route('/generate_summary', methods=['POST'])
 def generate_summary_endpoint():
-    # Use the existing Expense_data variable
     if not Expense_data or not Expense_data[0]:
         return jsonify({"error": "No expense data available."}), 400
 
-    # Generate the summary
     expense_data = Expense_data[0]
     try:
         summary = generate_summary(expense_data)
@@ -391,6 +390,48 @@ def generate_summary_endpoint():
         return jsonify({"error": f"Failed to generate summary: {e}"}), 500
 
     return jsonify({"summary": summary})
+
+    # Function
+
+
+# Flask route to generate brief summary
+from datetime import datetime
+
+def generate_brief_summary(expense_data):
+    # Group expenses by user and date
+    user_expenses = defaultdict(lambda: defaultdict(list))
+    for exp in expense_data:
+        user_name = exp['user_name']
+        date = exp['date'].strftime('%d/%m/%Y') if isinstance(exp['date'], datetime) else exp['date']
+        user_expenses[user_name][date].append(exp)
+
+    # Prepare the brief summary content
+    brief_summary_content = ""
+    for user_name, dates in user_expenses.items():
+        brief_summary_content += f"{user_name}:\n"
+        for date, expenses in dates.items():
+            for exp in expenses:
+                brief_summary_content += (
+                    f"- Spent ₹{exp['amount']:.2f} on {exp['category_name']} on {date}.\n"
+                )
+        brief_summary_content += "\n"
+
+    return brief_summary_content.strip()
+
+
+@app.route('/generate_brief_summary', methods=['POST'])
+def generate_brief_summary_endpoint():
+    if not Expense_data or not Expense_data[0]:
+        return jsonify({"error": "No expense data available."}), 400
+
+    expense_data = Expense_data[0]
+    try:
+        brief_summary = generate_brief_summary(expense_data)
+    except Exception as e:
+        return jsonify({"error": f"Failed to generate brief summary: {e}"}), 500
+
+    return jsonify({"brief_summary": brief_summary})
+
 
 
 
