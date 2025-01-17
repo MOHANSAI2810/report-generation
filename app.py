@@ -397,28 +397,48 @@ def generate_summary_endpoint():
 # Flask route to generate brief summary
 from datetime import datetime
 
+# Helper function to get the start of the week (Monday)
+def get_week_start(date):
+    if isinstance(date, str):
+        date = datetime.strptime(date, '%d/%m/%Y')
+    start_of_week = date - timedelta(days=date.weekday())  # Monday as the start of the week
+    return start_of_week.strftime('%d/%m/%Y')
+
+# Updated function to generate a weekly brief summary and highlight the week with the highest expense
 def generate_brief_summary(expense_data):
-    # Group expenses by user and date
+    # Group expenses by user and week
     user_expenses = defaultdict(lambda: defaultdict(list))
+    weekly_totals = defaultdict(lambda: defaultdict(float))  # To store total expenses per week per user
+
     for exp in expense_data:
         user_name = exp['user_name']
-        date = exp['date'].strftime('%d/%m/%Y') if isinstance(exp['date'], datetime) else exp['date']
-        user_expenses[user_name][date].append(exp)
+        week_start = get_week_start(exp['date']) if isinstance(exp['date'], datetime) else get_week_start(exp['date'])
+        user_expenses[user_name][week_start].append(exp)
+        weekly_totals[user_name][week_start] += exp['amount']
 
     # Prepare the brief summary content
     brief_summary_content = ""
-    for user_name, dates in user_expenses.items():
+    for user_name, weeks in user_expenses.items():
         brief_summary_content += f"{user_name}:\n"
-        for date, expenses in dates.items():
+        max_week = max(weekly_totals[user_name], key=weekly_totals[user_name].get)  # Week with the highest expense
+        max_amount = weekly_totals[user_name][max_week]
+
+        for week_start, expenses in weeks.items():
+            total = weekly_totals[user_name][week_start]
+            brief_summary_content += f"Week starting {week_start} (Total: ₹{total:.2f}):\n"
             for exp in expenses:
+                date = exp['date'].strftime('%d/%m/%Y') if isinstance(exp['date'], datetime) else exp['date']
                 brief_summary_content += (
                     f"- Spent ₹{exp['amount']:.2f} on {exp['category_name']} on {date}.\n"
                 )
+        
+        # Highlight the week with the highest expense
+        brief_summary_content += f"\nHighest expense week: Week starting {max_week} (₹{max_amount:.2f})\n"
         brief_summary_content += "\n"
 
     return brief_summary_content.strip()
 
-
+# Flask route to generate a weekly brief summary
 @app.route('/generate_brief_summary', methods=['POST'])
 def generate_brief_summary_endpoint():
     if not Expense_data or not Expense_data[0]:
@@ -431,9 +451,5 @@ def generate_brief_summary_endpoint():
         return jsonify({"error": f"Failed to generate brief summary: {e}"}), 500
 
     return jsonify({"brief_summary": brief_summary})
-
-
-
-
 if __name__ == '__main__':
     app.run(debug=True)
